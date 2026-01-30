@@ -1,0 +1,143 @@
+﻿"""
+Core business logic orchestrating Sheet repositories, events, skills, and logging.
+
+Functions here should be side-effect free except for calls into repositories.
+"""
+
+from __future__ import annotations
+
+import datetime
+from typing import List, Optional
+
+from data.repositories import Repositories
+from domain import effects, models, skills
+from utils import validators, time as time_utils
+
+
+class Logic:
+    def __init__(self, repo: Repositories) -> None:
+        self.repo = repo
+
+    def refresh_state(self):
+        """Load necessary tables into memory. Add caching if needed."""
+        self.players = self.repo.get_player_states()
+        self.tasks = self.repo.get_tasks()
+        return self
+
+    def complete_task(self, task: models.Task, player: models.PlayerState) -> None:
+        """
+        Mark task complete, apply rewards/penalties, trigger passives, and log.
+
+        TODO:
+        - 套用事件/被動影響的 EXP/MP/HP 修正
+        - 判定升級並回滿
+        - 合體技/特殊狀態處理
+        """
+        task.status = "✅擊殺"
+        player.exp += task.success_exp
+        self._check_level_up(player)
+        self._persist_task_and_player(task, player, delta_hp=0, delta_mp=0, delta_exp=task.success_exp)
+
+    def fail_task(self, task: models.Task, player: models.PlayerState) -> None:
+        """Mark task failed, apply penalties and log."""
+        task.status = "☠️失敗"
+        # 遠距支援旗標：若存在則本次不扣 HP
+        if getattr(player, "shield_fail", False):
+            delta_hp = 0
+            setattr(player, "shield_fail", False)
+        else:
+            delta_hp = task.fail_hp
+        player.hp_current = max(0, player.hp_current + delta_hp)  # fail_hp is negative
+        self._persist_task_and_player(task, player, delta_hp=delta_hp, delta_mp=0, delta_exp=0)
+
+    def use_skill(self, skill_id: str, actor: models.PlayerState, target: Optional[models.PlayerState]):
+        """Validate usage, apply effect, persist and log. (TODO: implement)."""
+        ctx = skills.SkillContext(actor=actor, target=target, state=self)
+        skills.apply_active(skill_id, context=ctx)
+
+    def mark_overdue_tasks(self) -> None:
+        """
+        檢查逾時任務：截止日 (Excel 序號或 ISO 字串) + extra_days/time_bonus。
+        若逾時且狀態非完成/失敗，視為失敗。
+        """
+        today = time_utils.now().date()
+        status_done = {"✅擊殺", "☠️失敗"}
+        for t in self.tasks:
+            if t.status in status_done:
+                continue
+            deadline_date = self._parse_deadline(t.deadline)
+            extra_days = getattr(t, "extra_days", 0)
+            time_bonus = getattr(t, "time_bonus", 0)
+            if deadline_date and deadline_date + time_utils.datetime.timedelta(days=extra_days + time_bonus) < today:  # type: ignore
+                player = self._find_player(t.player)
+                if player:
+                    self.fail_task(t, player)
+
+    def _persist_task_and_player(
+        self,
+        task: models.Task,
+        player: models.PlayerState,
+        delta_hp: int,
+        delta_mp: int,
+        delta_exp: int,
+    ) -> None:
+        self.repo.update_task_status(task)
+        self.repo.save_player_state(player)
+        log = models.LogEntry(
+            date=time_utils.now().date().isoformat(),
+            week="",
+            player=player.name,
+            type_="任務",
+            code=task.monster_id,
+            name=task.name,
+            desc="完成" if task.status == "✅擊殺" else "失敗",
+            target=player.name,
+            delta_hp=delta_hp,
+            delta_mp=delta_mp,
+            delta_exp=delta_exp,
+            hp=player.hp_current,
+            mp=player.mp_current,
+            exp=player.exp,
+        )
+        self.repo.append_log(log)
+
+    def _check_level_up(self, player: models.PlayerState) -> None:
+        """
+        根據等級資料表檢查累積 EXP，若升級則上限+1，回滿 HP/MP，並寫日誌。
+        """
+        levels, hp_inc, mp_inc, exp_req = self.repo.get_level_table()
+        if not levels:
+            return
+        # 找到最高符合的等級
+        target_level = player.level
+        for lvl, need_exp in zip(levels, exp_req):
+            if player.exp >= need_exp:
+                target_level = max(target_level, lvl)
+        if target_level > player.level:
+            player.level = target_level
+            # 以累計增量表更新上限
+            idx = levels.index(target_level)
+            player.hp_max = hp_inc[idx] if idx < len(hp_inc) else player.hp_max
+            player.mp_max = mp_inc[idx] if idx < len(mp_inc) else player.mp_max
+            player.hp_current = player.hp_max
+            player.mp_current = player.mp_max
+
+    def _find_player(self, name: str) -> Optional[models.PlayerState]:
+        for p in self.players:
+            if p.name == name:
+                return p
+        return None
+
+    def _parse_deadline(self, deadline: Optional[str]) -> Optional[time_utils.datetime.date]:  # type: ignore
+        if not deadline:
+            return None
+        try:
+            if deadline.isdigit():
+                return time_utils.excel_serial_to_date(float(deadline))
+        except Exception:
+            pass
+        try:
+            return time_utils.datetime.date.fromisoformat(deadline)  # type: ignore
+        except Exception:
+            return None
+
