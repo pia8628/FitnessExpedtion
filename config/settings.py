@@ -9,7 +9,9 @@ Optional:
 - TIMEZONE: default Asia/Taipei
 """
 
+import json
 import os
+import tempfile
 from pathlib import Path
 from dotenv import load_dotenv, dotenv_values
 
@@ -24,6 +26,26 @@ if dotenv_path.exists():
             os.environ[key] = value
 else:
     load_dotenv(override=True)
+
+def _load_streamlit_secrets() -> None:
+    try:
+        import streamlit as st
+    except Exception:
+        return
+    try:
+        secrets = st.secrets
+    except Exception:
+        return
+    if not os.getenv("SHEET_ID") and "SHEET_ID" in secrets:
+        os.environ["SHEET_ID"] = str(secrets["SHEET_ID"])
+    if not os.getenv("GOOGLE_APPLICATION_CREDENTIALS") and "google" in secrets:
+        service_path = os.path.join(tempfile.gettempdir(), "service-account.json")
+        if not os.path.exists(service_path) or os.path.getsize(service_path) == 0:
+            with open(service_path, "w", encoding="utf-8") as handle:
+                json.dump(dict(secrets["google"]), handle)
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = service_path
+
+_load_streamlit_secrets()
 
 SHEET_ID = os.getenv("SHEET_ID", "")
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Taipei")
