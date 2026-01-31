@@ -92,6 +92,16 @@ class SheetsClient:
         ws.delete_rows(row_idx)
         self._invalidate_cache(sheet_name)
 
+    def delete_rows(self, sheet_name: str, start_row: int, end_row: Optional[int] = None) -> None:
+        ws = self.worksheet(sheet_name)
+        if end_row is not None:
+            if end_row < start_row:
+                return
+            ws.delete_rows(start_row, end_row)
+        else:
+            ws.delete_rows(start_row)
+        self._invalidate_cache(sheet_name)
+
     def safe_update(
         self,
         sheet_name: str,

@@ -50,111 +50,9 @@ def render() -> None:
             "Easy機率": map_info.easy_rate,
             "Medium機率": map_info.medium_rate,
             "Hard機率": map_info.hard_rate,
-            "BOSS編號": map_info.boss_id,
             "地圖進度": f"{map_progress}/{map_info.week}",
-            "BOSS階段": "是" if boss_stage else "否",
-            "BOSS結算": "已完成" if boss_settled else "未完成",
         }
     )
-
-    bosses = logic.repo.get_bosses()
-    boss = next((b for b in bosses if b.boss_id == map_info.boss_id), None)
-    if boss_stage and not boss:
-        st.warning("已進入 BOSS 階段，但找不到對應 BOSS 資料，請確認地圖表 BOSS 編號與 BOSS 表一致。")
-    if boss and boss_stage:
-        st.subheader("BOSS 資訊")
-        st.write(
-            {
-                "名稱": boss.name,
-                "需累計運動時數": boss.required_hours,
-                "BOSS指定任務": boss.required_tasks,
-                "章節通關獎勵": boss.clear_reward,
-                "額外EXP每小時": boss.extra_exp_per_hour,
-                "最後一擊獎勵": boss.last_hit_reward,
-            }
-        )
-        st.subheader("BOSS 結算")
-        if "boss_result" in st.session_state:
-            st.table(st.session_state["boss_result"])
-            st.info("已完成 BOSS 結算。請回到本頁下方點「每週結算」進入下一週並抽卡。")
-        elif boss_settled:
-            results = logic.get_boss_settlement_results(boss.boss_id, boss_week)
-            if results:
-                st.table([{"玩家": name, "獲得EXP": exp} for name, exp in results.items()])
-            st.info("已完成 BOSS 結算。請回到本頁下方點「每週結算」進入下一週並抽卡。")
-        if boss_week:
-            st.caption(f"BOSS 回合：{boss_week}")
-        if boss_settled:
-            st.info("本週 BOSS 已結算。")
-            has_choice = False
-            checker = getattr(logic, "has_map_choice_for_week", None)
-            if checker:
-                has_choice = checker(boss_week or draw_week, map_info.map_id)
-            if not has_choice:
-                st.subheader("地圖選擇")
-                col_next, col_replay = st.columns(2)
-                with col_next:
-                    if st.button("進入下一張地圖"):
-                        success, message = logic.apply_boss_map_choice(
-                            map_info, boss_week or draw_week, "NEXT"
-                        )
-                        if success:
-                            st.success(message)
-                            st.session_state.pop("boss_result", None)
-                            st.session_state.pop("last_refresh", None)
-                            st.rerun()
-                        else:
-                            st.warning(message)
-                with col_replay:
-                    if st.button("同一張地圖再玩一次"):
-                        success, message = logic.apply_boss_map_choice(
-                            map_info, boss_week or draw_week, "REPLAY"
-                        )
-                        if success:
-                            st.success(message)
-                            st.session_state.pop("boss_result", None)
-                            st.session_state.pop("last_refresh", None)
-                            st.rerun()
-                        else:
-                            st.warning(message)
-            else:
-                st.caption("已完成地圖選擇，可進行每週結算。")
-        elif not logic.players:
-            st.info("無玩家資料，無法結算。")
-        else:
-            with st.form("boss_settlement"):
-                hours_inputs = {}
-                task_inputs = {}
-                for p in logic.players:
-                    hours_inputs[p.name] = st.number_input(
-                        f"{p.name} 本週運動時數",
-                        min_value=0.0,
-                        step=0.5,
-                        value=0.0,
-                    )
-                    task_inputs[p.name] = st.checkbox(f"{p.name} 已完成指定任務", value=False)
-                last_hit_options = ["無"] + [p.name for p in logic.players]
-                last_hit = st.selectbox("最後一擊玩家", options=last_hit_options)
-                submitted = st.form_submit_button("結算 BOSS")
-                if submitted:
-                    last_hit_player = None if last_hit == "無" else last_hit
-                    success, message, detail = logic.resolve_boss_week(
-                        boss,
-                        boss_week or draw_week,
-                        hours_by_player=hours_inputs,
-                        tasks_done_by_player=task_inputs,
-                        last_hit_player=last_hit_player,
-                    )
-                    if success:
-                        st.success(message)
-                        results = detail.get("exp_by_player", {})
-                        st.session_state["boss_result"] = [
-                            {"玩家": name, "獲得EXP": exp} for name, exp in results.items()
-                        ]
-                        st.session_state.pop("last_refresh", None)
-                        st.rerun()
-                    else:
-                        st.warning(message)
 
     st.subheader("本週流程")
     already_event = logic.has_drawn_event(draw_week)
@@ -164,23 +62,59 @@ def render() -> None:
         already_event = logic.has_drawn_event(draw_week)
         already_monsters = logic.has_drawn_monsters(draw_week)
     settled = already_event and already_monsters
-    if st.button("每週結算（抽事件 + 抽怪物 + 重置技能）", disabled=settled):
-        success, message, detail = logic.settle_week(draw_week, map_info)
-        if success:
-            event = detail.get("event")
-            created = detail.get("tasks")
-            map_progress = detail.get("map_progress", map_progress)
-            boss_stage = logic.is_boss_stage(map_info)
-            if event:
-                st.session_state["last_event"] = event
-            if created:
-                st.session_state["last_drawn_tasks"] = created
-            st.session_state.pop("boss_result", None)
-            st.session_state.pop("last_refresh", None)
-            st.success(message)
-            st.rerun()
+    boss_blocked = boss_stage and not boss_settled
+    if boss_blocked:
+        st.warning("地圖已進入 BOSS 階段，請先完成 BOSS 結算與地圖選擇。")
+    pending_tasks = logic.count_incomplete_tasks_for_week(draw_week)
+    if st.button(
+        "每週結算（抽事件 + 抽怪物 + 重置技能）", disabled=settled or boss_blocked
+    ):
+        if pending_tasks > 0:
+            st.session_state["confirm_settle_week"] = draw_week
         else:
-            st.warning(message)
+            success, message, detail = logic.settle_week(draw_week, map_info)
+            if success:
+                event = detail.get("event")
+                created = detail.get("tasks")
+                map_progress = detail.get("map_progress", map_progress)
+                boss_stage = logic.is_boss_stage(map_info)
+                if event:
+                    st.session_state["last_event"] = event
+                if created:
+                    st.session_state["last_drawn_tasks"] = created
+                st.session_state.pop("boss_result", None)
+                st.session_state.pop("last_refresh", None)
+                st.success(message)
+                st.rerun()
+            else:
+                st.warning(message)
+
+    if st.session_state.get("confirm_settle_week") == draw_week:
+        st.warning(f"本週仍有 {pending_tasks} 筆未完成任務，確認後將全部判定為失敗。")
+        col_confirm, col_cancel = st.columns(2)
+        with col_confirm:
+            if st.button("確認結算並判定失敗", key="confirm_settle"):
+                logic.fail_incomplete_tasks_for_week(draw_week)
+                st.session_state.pop("confirm_settle_week", None)
+                success, message, detail = logic.settle_week(draw_week, map_info)
+                if success:
+                    event = detail.get("event")
+                    created = detail.get("tasks")
+                    map_progress = detail.get("map_progress", map_progress)
+                    boss_stage = logic.is_boss_stage(map_info)
+                    if event:
+                        st.session_state["last_event"] = event
+                    if created:
+                        st.session_state["last_drawn_tasks"] = created
+                    st.session_state.pop("boss_result", None)
+                    st.session_state.pop("last_refresh", None)
+                    st.success(message)
+                    st.rerun()
+                else:
+                    st.warning(message)
+        with col_cancel:
+            if st.button("取消", key="cancel_settle"):
+                st.session_state.pop("confirm_settle_week", None)
 
     event = None
     if "last_event" in st.session_state:
@@ -204,7 +138,7 @@ def render() -> None:
             st.info("本週已抽事件。")
 
     if event and event.effect_code:
-        codes = [c.strip() for c in event.effect_code.split(",") if c.strip()]
+        codes = logic.parse_event_codes(event.effect_code)
         if "CHOICE_MONSTER_LV-1_OR_LV+1_BONUS_EXP+5" in codes:
             st.subheader("事件選擇")
             col_a, col_b = st.columns(2)

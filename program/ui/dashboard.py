@@ -5,8 +5,22 @@ import streamlit as st
 from ui import get_logic_state
 
 
+def _build_skill_summary(player_name: str, skill_states) -> str:
+    parts = []
+    for state in skill_states:
+        if state.player != player_name:
+            continue
+        if not state.enabled or state.enabled.upper() != "Y":
+            continue
+        name = state.name or state.skill_id
+        remaining = state.remaining
+        remaining_text = "∞" if remaining is None else str(remaining)
+        parts.append(f"{name}({remaining_text})")
+    return "、".join(parts)
+
+
 def render() -> None:
-    st.header("Dashboard")
+    st.header("狀態總覽")
     try:
         logic = get_logic_state()
     except Exception as exc:
@@ -14,17 +28,20 @@ def render() -> None:
         return
 
     st.subheader("玩家狀態")
+    job_map = {code: name for code, name in logic.repo.get_job_options()}
+    skill_states = logic.repo.get_skill_states()
     players = []
     for p in logic.players:
         players.append(
             {
                 "玩家": p.name,
-                "職業": p.job,
+                "職業": job_map.get(p.job, p.job),
                 "等級": p.level,
                 "EXP": p.exp,
                 "HP": f"{p.hp_current}/{p.hp_max}",
                 "MP": f"{p.mp_current}/{p.mp_max}",
-                "技能摘要": p.skill_summary,
+                "技能摘要": _build_skill_summary(p.name, skill_states),
+                "懲罰剩餘週數": p.penalty_weeks,
             }
         )
     if players:

@@ -20,6 +20,7 @@ class PlayerState:
     hp_max: int
     mp_max: int
     skill_summary: str = ""
+    penalty_weeks: int = 0
 
     @staticmethod
     def from_rows(rows: List[List[str]]) -> List["PlayerState"]:
@@ -73,6 +74,12 @@ class PlayerState:
                         hp_max=parse_int(get_value(r, ["HP上限"]), hp_max_from_cell),
                         mp_max=parse_int(get_value(r, ["MP上限"]), mp_max_from_cell),
                         skill_summary=get_value(r, ["技能摘要"]),
+                        penalty_weeks=parse_int(
+                            get_value(
+                                r,
+                                ["MP歸零剩餘週數", "MP歸零剩餘", "懲罰剩餘週數", "懲罰週數"],
+                            )
+                        ),
                     )
                 )
             except Exception:
@@ -322,19 +329,26 @@ class SkillState:
         for r in data:
             if not r or len(r) <= 1:
                 continue
+            total_uses = parse_int(get_value(r, ["每週可用總次數", "每週可用次數"]))
+            remaining = parse_int(get_value(r, ["剩餘次數"]))
+            if remaining is None and total_uses is not None:
+                remaining = total_uses
+            desc = get_value(r, ["技能效果說明", "技能敘述", "技能描述", "敘述"])
+            if desc.startswith("#ERROR"):
+                desc = ""
             results.append(
                 SkillState(
-                    player=get_value(r, ["玩家"]),
+                    player=get_value(r, ["玩家", "角色", "玩家名稱", "使用者"]),
                     job=get_value(r, ["職業"]),
                     skill_id=get_value(r, ["技能ID", "技能編碼"]),
                     name=get_value(r, ["技能名稱"]),
                     kind=get_value(r, ["主被動"]),
                     mp_cost=parse_int(get_value(r, ["MP消耗", "消耗MP"])) or 0,
                     enabled=get_value(r, ["啟用狀態"]),
-                    total_uses=parse_int(get_value(r, ["每週可用總次數"])),
-                    remaining=parse_int(get_value(r, ["剩餘次數"])),
+                    total_uses=total_uses,
+                    remaining=remaining,
                     reset_rule=get_value(r, ["重置規則"]),
-                    description=get_value(r, ["技能效果說明", "技能敘述"]),
+                    description=desc,
                 )
             )
         return results
@@ -363,8 +377,8 @@ class MapInfo:
             for name in names:
                 idx = col.get(name)
                 if idx is not None and idx < len(row):
-                    return row[idx]
-            return default
+                    return str(row[idx]).strip()
+            return str(default).strip()
 
         def parse_int(value: str, default: int = 0) -> int:
             if value is None:

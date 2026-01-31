@@ -2,7 +2,7 @@
 
 import streamlit as st
 
-from ui import get_logic_state
+from ui import get_logic_state, get_active_player
 
 
 def render() -> None:
@@ -26,21 +26,59 @@ def render() -> None:
     actor_names = [p.name for p in logic.players]
     tasks = logic.tasks
 
-    actor_name = st.selectbox("使用者", options=actor_names)
+    active_player = get_active_player()
+    if active_player and active_player in actor_names:
+        actor_name = active_player
+        st.caption(f"使用者：{actor_name}")
+    else:
+        actor_name = st.selectbox("使用者", options=actor_names)
     skill_states = st.session_state["skill_states"]
+    def _is_enabled(state) -> bool:
+        raw = (state.enabled or "").strip()
+        if not raw:
+            return True
+        normalized = raw.upper()
+        if normalized in {"N", "NO", "FALSE", "0"} or raw in {"否", "停用", "禁用"}:
+            return False
+        return True
+
+    def _is_active_kind(state) -> bool:
+        kind = (state.kind or "").strip()
+        if not kind:
+            return True
+        normalized = kind.upper()
+        if "主動" in kind or normalized in {"A", "ACTIVE"}:
+            return True
+        if "被動" in kind or normalized in {"P", "PASSIVE"}:
+            return False
+        return True
+
     actor_skills = [
         s
         for s in skill_states
-        if s.player == actor_name and s.enabled.upper() == "Y" and s.kind.upper() in {"A", "主動"}
+        if s.player == actor_name and _is_enabled(s) and _is_active_kind(s)
     ]
 
     if not actor_skills:
         st.info("此玩家沒有可用主動技能。")
         return
 
-    skill_label_map = {f"{s.name} ({s.skill_id})": s for s in actor_skills}
+    def label_for(state):
+        return state.name or state.skill_id
+
+    skill_label_map = {label_for(s): s for s in actor_skills}
     skill_label = st.selectbox("技能", options=list(skill_label_map.keys()))
     skill = skill_label_map[skill_label]
+
+    skill_def = None
+    desc_from_state = (skill.description or "").strip()
+    if desc_from_state.startswith("#ERROR"):
+        desc_from_state = ""
+    if (not skill.name or not desc_from_state or not skill.mp_cost) and skill.skill_id:
+        skill_def = logic.repo.get_skill_definition(skill.skill_id)
+    if skill_def and skill_def.description and skill_def.description != skill.description:
+        skill.description = skill_def.description
+        logic.repo.update_skill_state(skill)
 
     requires_target = skill.skill_id in {"GeA001", "PrA001", "ArA001"}
     requires_task = skill.skill_id in {"MaA001", "ThA001"}
@@ -49,8 +87,9 @@ def render() -> None:
     if actor:
         st.caption(f"{actor.name} HP {actor.hp_current}/{actor.hp_max}｜MP {actor.mp_current}/{actor.mp_max}")
 
-    if skill.description:
-        st.write(f"技能說明：{skill.description}")
+    desc = (skill_def.description if skill_def and skill_def.description else desc_from_state)
+    if desc:
+        st.write(f"技能說明：{desc}")
 
     target_name = None
     if requires_target:
@@ -68,8 +107,12 @@ def render() -> None:
         else:
             st.info("目前沒有可選任務。")
 
+    mp_cost = skill.mp_cost if skill.mp_cost else (skill_def.mp_cost if skill_def else 0)
+    remaining_display = skill.remaining
+    if remaining_display is None and getattr(skill, "total_uses", None) is not None:
+        remaining_display = skill.total_uses
     st.caption(
-        f"MP消耗：{skill.mp_cost}｜剩餘次數：{skill.remaining if skill.remaining is not None else '不限'}"
+        f"MP消耗：{mp_cost}｜剩餘次數：{remaining_display if remaining_display is not None else '不限'}"
     )
 
     if st.button("使用技能"):
@@ -88,6 +131,8 @@ def render() -> None:
         if skill.remaining is not None and skill.remaining <= 0:
             st.warning("技能次數不足。")
             return
+        if skill_def and (not skill.mp_cost or skill.mp_cost == 0):
+            skill.mp_cost = skill_def.mp_cost
         if logic.use_skill(skill.skill_id, actor, target, task, skill_state=skill):
             st.success("技能已套用。")
             st.caption(
