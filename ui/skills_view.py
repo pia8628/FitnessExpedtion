@@ -2,11 +2,11 @@
 
 import streamlit as st
 
-from ui import get_logic_state, get_active_player
+from ui import get_logic_state, get_active_player, render_header
 
 
 def render() -> None:
-    st.header("技能")
+    render_header(page_title="技能")
     try:
         logic = get_logic_state()
     except Exception as exc:
@@ -144,3 +144,8 @@ def render() -> None:
                 )
         else:
             st.warning("技能使用失敗（MP 不足或條件不符）。")
+
+    st.caption("選擇欲施放的技能，部分技能需選擇施放目標。")
+    st.caption("合體技使用：施放完合體技後，擊敗怪物將獲得合體技的經驗值獎勵。")
+    st.caption("注意 MP 消耗與剩餘次數。")
+

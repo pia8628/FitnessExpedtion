@@ -53,9 +53,16 @@ def apply_active(skill_id: str, context: SkillContext) -> bool:
     def get_cost(default_cost: int) -> int:
         if context.skill_state is None:
             return default_cost
-        if context.skill_state.mp_cost is None:
+        raw_cost = context.skill_state.mp_cost
+        if raw_cost is None:
             return default_cost
-        return int(context.skill_state.mp_cost)
+        try:
+            cost = int(raw_cost)
+        except Exception:
+            return default_cost
+        if cost <= 0:
+            return default_cost
+        return cost
 
     if skill_id == "GeA001":  # 急救
         if not target:

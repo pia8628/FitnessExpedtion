@@ -2,11 +2,11 @@
 
 import streamlit as st
 
-from ui import get_logic_state
+from ui import get_logic_state, render_header
 
 
 def render() -> None:
-    st.header("週結算")
+    render_header(page_title="週結算")
     try:
         logic = get_logic_state()
     except Exception as exc:
@@ -175,3 +175,7 @@ def render() -> None:
         )
     elif already_monsters:
         st.info("本週已抽怪物。")
+
+    st.caption("進行本週抽卡與週結算流程。")
+    st.caption("若仍有未完成任務，可先確認失敗再結算。")
+

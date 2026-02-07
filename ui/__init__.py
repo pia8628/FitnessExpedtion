@@ -2,11 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
 from data.repositories import Repositories
 from data.sheets_client import SheetsClient
 from domain.logic import Logic
+from config.settings import APP_VERSION
 
 
 def get_logic() -> Logic:
@@ -39,3 +42,21 @@ def set_entered(value: bool, active_player: str | None = None) -> None:
 
 def get_active_player() -> str | None:
     return st.session_state.get("active_player")
+
+
+def render_header(page_title: str | None = None, show_logo: bool = True, logo_width: int = 140) -> None:
+    logo_path = Path(__file__).resolve().parent / "assets" / "branding" / "logo.png"
+    if show_logo and logo_path.exists():
+        col_logo, col_title = st.columns([1, 6])
+        with col_logo:
+            st.image(str(logo_path), width=logo_width)
+        with col_title:
+            if page_title:
+                st.markdown(f"## {page_title}")
+    else:
+        if page_title:
+            st.header(page_title)
+    st.markdown(
+        f"<div style='text-align: right; font-size: 12px; color: #666;'>版本 {APP_VERSION}</div>",
+        unsafe_allow_html=True,
+    )

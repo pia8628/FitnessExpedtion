@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import streamlit as st
 
-from ui import get_logic_state, set_entered
+from ui import get_logic_state, set_entered, render_header
 
 
 def _validate_players(players: list[tuple[str, str]]) -> tuple[bool, str]:
@@ -24,12 +26,17 @@ def _validate_players(players: list[tuple[str, str]]) -> tuple[bool, str]:
 
 
 def render() -> None:
-    st.header("進入遊戲")
-    st.markdown("<div style='text-align: right; font-size: 12px; color: #666;'>v0.5</div>", unsafe_allow_html=True)
+    render_header(page_title="進入遊戲", show_logo=False)
+    home_image = Path(__file__).resolve().parent / "assets" / "home" / "home_image.png"
+    if home_image.exists():
+        st.image(str(home_image), width=900)
     try:
         logic = get_logic_state()
     except Exception as exc:
         st.error(f"無法連線到 Google Sheet：{exc}")
+        st.caption("在此進入既有遊戲或建立新遊戲。")
+        st.caption("建立新遊戲時請輸入玩家名稱與職業。")
+        st.caption("完成後點選「進入遊戲」開始。")
         return
 
     job_options = logic.repo.get_job_options()
@@ -45,7 +52,7 @@ def render() -> None:
         selected = st.selectbox("選擇玩家", options=options)
         if st.button("進入遊戲"):
             if not selected:
-                st.warning("請選擇玩家。")
+                st.warning("請先選擇玩家。")
             else:
                 set_entered(True, active_player=selected)
                 st.success(f"已以 {selected} 進入遊戲。")
@@ -53,7 +60,7 @@ def render() -> None:
 
     with tab_create:
         st.subheader("建立新遊戲")
-        st.caption("建立新遊戲會清空現有進度（任務與紀錄）。")
+        st.caption("建立新遊戲時，會初始化玩家狀態與技能。")
         player_count = st.slider("玩家人數", min_value=1, max_value=5, value=1)
         players: list[tuple[str, str]] = []
         for idx in range(player_count):
@@ -72,7 +79,7 @@ def render() -> None:
                     job = st.text_input(f"玩家 {idx + 1} 職業", key=f"new_player_job_{idx}")
             players.append((name, job))
 
-        confirm = st.checkbox("我了解建立新遊戲會覆蓋既有進度")
+        confirm = st.checkbox("我已確認資料正確")
         if st.button("建立並進入遊戲", disabled=not confirm):
             ok, message = _validate_players(players)
             if not ok:
@@ -85,3 +92,7 @@ def render() -> None:
                     st.rerun()
                 else:
                     st.error(result)
+
+    st.caption("在此進入既有遊戲或建立新遊戲。")
+    st.caption("建立新遊戲時請輸入玩家名稱與職業。")
+    st.caption("完成後點選「進入遊戲」開始。")

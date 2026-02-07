@@ -2,17 +2,22 @@
 
 import streamlit as st
 
-from ui import get_logic_state, get_active_player
+from ui import get_logic_state, get_active_player, render_header
 
 
 def render() -> None:
-    st.header("任務")
+    render_header(page_title="任務")
+    help_lines = [
+        "處理本週事件任務與怪物任務。",
+        "完成或失敗都會寫入紀錄，已完成任務將在週結算清除。",
+    ]
     try:
         logic = get_logic_state()
     except Exception as exc:
         st.error(f"無法連線到 Google Sheet：{exc}")
+        for line in help_lines:
+            st.caption(line)
         return
-
     st.subheader("事件任務")
     week = logic.get_last_week_from_logs()
     event = logic.get_event_for_week(week) if week > 0 else None
@@ -259,6 +264,8 @@ def render() -> None:
         tasks = [t for t in tasks if t.player == active_player]
     if not tasks:
         st.info("尚無任務資料。")
+    for line in help_lines:
+        st.caption(line)
         return
 
     task_labels = [f"{t.player} - {t.name} ({t.monster_id})" for t in tasks]
@@ -313,3 +320,6 @@ def render() -> None:
             logic.mark_overdue_tasks()
             st.info("已檢查逾時任務。")
             st.rerun()
+
+    for line in help_lines:
+        st.caption(line)

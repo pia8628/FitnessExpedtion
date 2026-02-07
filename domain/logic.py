@@ -1006,7 +1006,13 @@ class Logic:
             except Exception:
                 continue
             if week_int < current_week:
-                if self.repo.delete_task(task.monster_id):
+                if self.repo.delete_task(
+                    task.monster_id,
+                    player=task.player,
+                    start_date=task.start_date,
+                    deadline=task.deadline,
+                    name=task.name,
+                ):
                     removed += 1
         if removed:
             self.tasks = self.repo.get_tasks()

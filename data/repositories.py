@@ -465,10 +465,44 @@ class Repositories:
             exp_req.append(exp)
         return levels, hp_inc, mp_inc, exp_req
 
+    def _find_task_row_idx(self, header: List[str], data: List[List[str]], task: models.Task) -> Optional[int]:
+        id_col = _col_index_any(header, ["怪物ID", "怪物編號", "怪物編碼"])
+        if id_col is None:
+            return None
+        matches = []
+        for idx, row in enumerate(data, start=2):
+            if len(row) <= id_col:
+                continue
+            if str(row[id_col]).strip() == str(task.monster_id).strip():
+                matches.append(idx)
+        if not matches:
+            return None
+        if len(matches) == 1:
+            return matches[0]
+
+        def refine(col: Optional[int], value: Optional[str]) -> None:
+            nonlocal matches
+            if col is None:
+                return
+            if value is None or str(value).strip() == "":
+                return
+            filtered = []
+            for idx in matches:
+                row = data[idx - 2] if idx - 2 < len(data) else []
+                if col < len(row) and str(row[col]).strip() == str(value).strip():
+                    filtered.append(idx)
+            if filtered:
+                matches = filtered
+
+        refine(_col_index_any(header, ["玩家"]), task.player)
+        refine(_col_index_any(header, ["開始日"]), task.start_date)
+        refine(_col_index_any(header, ["截止日"]), task.deadline)
+        refine(_col_index_any(header, ["怪物名稱", "任務名稱", "名稱"]), task.name)
+        return matches[0]
+
     def update_task_status(self, task: models.Task) -> bool:
         header, data = self.client.read_rows_with_header("任務列表")
-        id_col = _col_index_any(header, ["怪物ID", "怪物編號", "怪物編碼"])
-        row_idx = _find_row_by_value(data, id_col, task.monster_id)
+        row_idx = self._find_task_row_idx(header, data, task)
         if not row_idx:
             return False
         existing = data[row_idx - 2] if row_idx - 2 < len(data) else []
@@ -487,10 +521,28 @@ class Repositories:
         self.client.update_row("任務列表", row_idx, row)
         return True
 
-    def delete_task(self, monster_id: str) -> bool:
+    def delete_task(
+        self,
+        monster_id: str,
+        player: Optional[str] = None,
+        start_date: Optional[str] = None,
+        deadline: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> bool:
         header, data = self.client.read_rows_with_header("任務列表")
-        id_col = _col_index_any(header, ["怪物ID", "怪物編號", "怪物編碼"])
-        row_idx = _find_row_by_value(data, id_col, monster_id)
+        if not header:
+            return False
+        dummy_task = models.Task(
+            monster_id=monster_id,
+            player=player or "",
+            name=name or "",
+            difficulty="",
+            content="",
+            start_date=start_date,
+            deadline=deadline,
+            status="",
+        )
+        row_idx = self._find_task_row_idx(header, data, dummy_task)
         if not row_idx:
             return False
         self.client.delete_row("任務列表", row_idx)

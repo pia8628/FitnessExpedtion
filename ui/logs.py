@@ -2,11 +2,11 @@
 
 import streamlit as st
 
-from ui import get_logic_state
+from ui import get_logic_state, render_header
 
 
 def render() -> None:
-    st.header("紀錄")
+    render_header(page_title="紀錄")
     try:
         logic = get_logic_state()
         header, data = logic.repo.get_logs(limit=200)
@@ -66,3 +66,7 @@ def render() -> None:
             st.table(group_rows)
     else:
         st.info("沒有符合條件的紀錄。")
+
+    st.caption("查看任務、技能、事件等紀錄。")
+    st.caption("可用篩選器鎖定玩家或類型。")
+

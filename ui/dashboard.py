@@ -2,7 +2,7 @@
 
 import streamlit as st
 
-from ui import get_logic_state
+from ui import get_logic_state, render_header
 
 
 def _build_skill_summary(player_name: str, skill_states) -> str:
@@ -20,7 +20,7 @@ def _build_skill_summary(player_name: str, skill_states) -> str:
 
 
 def render() -> None:
-    st.header("狀態總覽")
+    render_header(page_title="狀態總覽")
     try:
         logic = get_logic_state()
     except Exception as exc:
@@ -153,3 +153,6 @@ def render() -> None:
         )
     else:
         st.info("地圖表無資料。")
+
+    st.caption("查看全員狀態、等級與技能摘要。")
+    st.caption("若狀態未更新，請先完成任務或週結算。")
