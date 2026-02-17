@@ -50,7 +50,7 @@ _load_streamlit_secrets()
 SHEET_ID = os.getenv("SHEET_ID", "")
 TIMEZONE = os.getenv("TIMEZONE", "Asia/Taipei")
 SERVICE_ACCOUNT_JSON = os.getenv("GOOGLE_APPLICATION_CREDENTIALS", "")
-APP_VERSION = os.getenv("APP_VERSION", "0.1.1 beta")
+APP_VERSION = os.getenv("APP_VERSION", "0.1.2 beta")
 
 
 def require_settings() -> None:

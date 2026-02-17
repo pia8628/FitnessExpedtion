@@ -8,8 +8,8 @@ from ui import get_logic_state, get_active_player, render_header
 def render() -> None:
     render_header(page_title="任務")
     help_lines = [
-        "處理本週事件任務與怪物任務。",
-        "完成或失敗都會寫入紀錄，已完成任務將在週結算清除。",
+        "處理本回合事件任務與怪物任務。",
+        "完成或失敗都會寫入紀錄，已完成任務將在回合結算清除。",
     ]
     try:
         logic = get_logic_state()
@@ -28,13 +28,13 @@ def render() -> None:
         codes = logic.parse_event_codes(event.effect_code)
 
     if not codes:
-        st.info("本周無事件任務")
+        st.info("本回合無事件任務")
     else:
         if "IF_OUTDOOR_EXERCISE_THEN_EXP+2" in codes:
-            st.write("戶外運動：本週有戶外運動即可完成，完成後全員 EXP +2。")
+            st.write("戶外運動：本回合有戶外運動即可完成，完成後全員 EXP +2。")
             completed = logic.has_event_completion(week, "IF_OUTDOOR_EXERCISE_THEN_EXP+2")
             if completed:
-                st.caption("本週已完成戶外運動事件。")
+                st.caption("本回合已完成戶外運動事件。")
             if st.button("完成任務", key="outdoor_exercise", disabled=completed):
                 success, message = logic.complete_outdoor_exercise_event(week)
                 if success:
@@ -44,10 +44,10 @@ def render() -> None:
                 else:
                     st.warning(message)
         if "IF_OUTDOOR_PHOTO_THEN_EXP+2" in codes:
-            st.write("戶外照片：本週有戶外照片即可完成，完成後全員 EXP +2。")
+            st.write("戶外照片：本回合有戶外照片即可完成，完成後全員 EXP +2。")
             completed = logic.has_event_completion(week, "IF_OUTDOOR_PHOTO_THEN_EXP+2")
             if completed:
-                st.caption("本週已完成戶外照片事件。")
+                st.caption("本回合已完成戶外照片事件。")
             if st.button("完成任務", key="outdoor_photo", disabled=completed):
                 success, message = logic.complete_outdoor_photo_event(week)
                 if success:
@@ -66,7 +66,7 @@ def render() -> None:
                 else False
             )
             if completed:
-                st.caption("本週已完成額外運動事件。")
+                st.caption("本回合已完成額外運動事件。")
             if st.button("完成額外運動", key="extra_workout", disabled=completed):
                 success, message = logic.complete_extra_workout_event(week, selected)
                 if success:
@@ -159,7 +159,7 @@ def render() -> None:
                     default_task = contributions.get(p.name, {}).get("task_done", False)
                     disabled = active_player is not None and p.name != active_player
                     hours_inputs[p.name] = st.number_input(
-                        f"{p.name} 本週運動時數",
+                        f"{p.name} 本回合運動時數",
                         min_value=0.0,
                         step=0.5,
                         value=float(default_hours) if default_hours is not None else 0.0,
@@ -260,15 +260,23 @@ def render() -> None:
     st.subheader("怪物任務")
     active_player = get_active_player()
     tasks = logic.tasks
+    filtered = tasks
     if active_player:
-        tasks = [t for t in tasks if t.player == active_player]
+        active_norm = str(active_player).strip()
+        filtered = [t for t in tasks if str(t.player).strip() == active_norm]
+        if not filtered and tasks:
+            st.info("目前玩家沒有符合的任務，先顯示全部任務。")
+    tasks = filtered if filtered else tasks
     if not tasks:
         st.info("尚無任務資料。")
-    for line in help_lines:
-        st.caption(line)
+        for line in help_lines:
+            st.caption(line)
         return
 
-    task_labels = [f"{t.player} - {t.name} ({t.monster_id})" for t in tasks]
+    task_labels = [
+        f"#{i+1} {t.player} - {t.name} ({t.monster_id}) {t.start_date or ''}~{t.deadline or ''}"
+        for i, t in enumerate(tasks)
+    ]
     selected = st.selectbox("選擇任務", options=task_labels)
     task = tasks[task_labels.index(selected)]
     player = next((p for p in logic.players if p.name == task.player), None)
@@ -285,10 +293,10 @@ def render() -> None:
         }
     )
 
-    status_done = {"✅擊殺", "☠️失敗", "?擊殺", "??失敗"}
+    status_done = {"擊殺", "失敗"}
     is_done = task.status in status_done
     if is_done:
-        st.caption("此任務已完成，將在下次週結算時清除。")
+        st.caption("此任務已完成，將在下次回合結算時清除。")
 
     col1, col2, col3 = st.columns(3)
     with col1:

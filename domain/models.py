@@ -125,20 +125,31 @@ class Task:
                 return int(float(text))
             except Exception:
                 return default
+        def clean(value: str) -> str:
+            if value is None:
+                return ""
+            return str(value).strip()
+        def normalize_status(value: str) -> str:
+            text = clean(value)
+            if "擊殺" in text:
+                return "擊殺"
+            if "失敗" in text:
+                return "失敗"
+            return text
         for r in data:
             if not r or len(r) <= 1:
                 continue
             try:
                 results.append(
                     Task(
-                        monster_id=get_value(r, ["怪物ID"]),
-                        player=get_value(r, ["玩家"]),
-                        name=get_value(r, ["怪物名稱"]),
-                        difficulty=get_value(r, ["難度"]),
-                        content=get_value(r, ["任務內容"]),
-                        start_date=get_value(r, ["開始日"]),
-                        deadline=get_value(r, ["截止日"]),
-                        status=get_value(r, ["狀態", "狀態(?/??/??)"]),
+                        monster_id=clean(get_value(r, ["怪物ID"])),
+                        player=clean(get_value(r, ["玩家"])),
+                        name=clean(get_value(r, ["怪物名稱"])),
+                        difficulty=clean(get_value(r, ["難度"])),
+                        content=clean(get_value(r, ["任務內容"])),
+                        start_date=clean(get_value(r, ["開始日"])),
+                        deadline=clean(get_value(r, ["截止日"])),
+                        status=normalize_status(get_value(r, ["狀態", "狀態(?/??/??)"])),
                         success_exp=parse_int(get_value(r, ["成功EXP"])),
                         fail_hp=parse_int(get_value(r, ["失敗-HP"])),
                         time_limit_days=(

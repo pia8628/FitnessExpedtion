@@ -6,7 +6,7 @@ from ui import get_logic_state, render_header
 
 
 def render() -> None:
-    render_header(page_title="週結算")
+    render_header(page_title="回合結算")
     try:
         logic = get_logic_state()
     except Exception as exc:
@@ -54,7 +54,7 @@ def render() -> None:
         }
     )
 
-    st.subheader("本週流程")
+    st.subheader("本回合流程")
     already_event = logic.has_drawn_event(draw_week)
     already_monsters = logic.has_drawn_monsters(draw_week)
     if already_event and already_monsters:
@@ -67,7 +67,7 @@ def render() -> None:
         st.warning("地圖已進入 BOSS 階段，請先完成 BOSS 結算與地圖選擇。")
     pending_tasks = logic.count_incomplete_tasks_for_week(draw_week)
     if st.button(
-        "每週結算（抽事件 + 抽怪物 + 重置技能）", disabled=settled or boss_blocked
+        "每回合結算（抽事件 + 抽怪物 + 重置技能）", disabled=settled or boss_blocked
     ):
         if pending_tasks > 0:
             st.session_state["confirm_settle_week"] = draw_week
@@ -90,7 +90,7 @@ def render() -> None:
                 st.warning(message)
 
     if st.session_state.get("confirm_settle_week") == draw_week:
-        st.warning(f"本週仍有 {pending_tasks} 筆未完成任務，確認後將全部判定為失敗。")
+        st.warning(f"本回合仍有 {pending_tasks} 筆未完成任務，確認後將全部判定為失敗。")
         col_confirm, col_cancel = st.columns(2)
         with col_confirm:
             if st.button("確認結算並判定失敗", key="confirm_settle"):
@@ -135,7 +135,7 @@ def render() -> None:
             if event.note:
                 st.write(f"說明：{event.note}")
         else:
-            st.info("本週已抽事件。")
+            st.info("本回合已抽事件。")
 
     if event and event.effect_code:
         codes = logic.parse_event_codes(event.effect_code)
@@ -174,8 +174,8 @@ def render() -> None:
             ]
         )
     elif already_monsters:
-        st.info("本週已抽怪物。")
+        st.info("本回合已抽怪物。")
 
-    st.caption("進行本週抽卡與週結算流程。")
+    st.caption("進行本回合抽卡與回合結算流程。")
     st.caption("若仍有未完成任務，可先確認失敗再結算。")
 

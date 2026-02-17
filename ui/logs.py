@@ -16,7 +16,7 @@ def render() -> None:
 
     home_week, _ = logic.repo.get_home_status()
     if home_week and home_week > 0:
-        st.caption(f"遊玩總週數：{home_week}")
+        st.caption(f"遊玩總回合數：{home_week}")
 
     if not header:
         st.info("尚無紀錄資料。")
@@ -58,12 +58,24 @@ def render() -> None:
 
         weeks_sorted = sorted(groups.keys(), key=week_key, reverse=True)
         for week_value in weeks_sorted:
-            label = str(week_value).strip() or "未標記週數"
-            st.subheader(f"週數：{label}")
+            label = str(week_value).strip() or "未標記回合"
+            st.subheader(f"回合：{label}")
             group_rows = sorted(
                 groups[week_value], key=lambda r: date_key(r.get("日期", "")), reverse=True
             )
-            st.table(group_rows)
+            view_rows = []
+            for r in group_rows:
+                view_rows.append(
+                    {
+                        "日期": r.get("日期", ""),
+                        "回合": r.get("週數", ""),
+                        "玩家": r.get("玩家", ""),
+                        "類型": r.get("類型", ""),
+                        "名稱": r.get("名稱", ""),
+                        "效果說明": r.get("效果說明", ""),
+                    }
+                )
+            st.table(view_rows)
     else:
         st.info("沒有符合條件的紀錄。")
 

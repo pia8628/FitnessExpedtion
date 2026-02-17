@@ -41,7 +41,7 @@ def render() -> None:
                 "HP": f"{p.hp_current}/{p.hp_max}",
                 "MP": f"{p.mp_current}/{p.mp_max}",
                 "技能摘要": _build_skill_summary(p.name, skill_states),
-                "懲罰剩餘週數": p.penalty_weeks,
+                "懲罰剩餘回合": p.penalty_weeks,
             }
         )
     if players:
@@ -54,10 +54,8 @@ def render() -> None:
     for t in logic.tasks:
         tasks.append(
             {
-                "怪物ID": t.monster_id,
                 "玩家": t.player,
                 "怪物名稱": t.name,
-                "難度": t.difficulty,
                 "任務內容": t.content,
                 "截止日": t.deadline or "",
                 "狀態": t.status,
@@ -70,21 +68,20 @@ def render() -> None:
     else:
         st.info("尚無任務資料。")
 
-    st.subheader("本週事件")
+    st.subheader("本回合事件")
     home_week, home_map_id = logic.repo.get_home_status()
     display_week = home_week if home_week and home_week > 0 else None
     event = None
     if display_week:
         event = logic.get_event_for_week(display_week)
     if event:
-        st.write(
-            {
-                "回合": display_week,
-                "事件代碼": event.event_id,
-                "事件名稱": event.name,
-                "事件效果": f"{event.effect_code} {event.description}".strip(),
-            }
-        )
+                st.write(
+                    {
+                        "回合": display_week,
+                        "事件名稱": event.name,
+                        "事件效果": f"{event.effect_code} {event.description}".strip(),
+                    }
+                )
     else:
         try:
             header, data = logic.repo.get_logs(limit=200)
@@ -106,9 +103,6 @@ def render() -> None:
             if last_event:
                 st.write(
                     {
-                        "事件代碼": last_event[code_idx]
-                        if code_idx is not None and len(last_event) > code_idx
-                        else "",
                         "事件名稱": last_event[name_idx]
                         if name_idx is not None and len(last_event) > name_idx
                         else "",
@@ -138,15 +132,25 @@ def render() -> None:
             if display_week
             else False
         )
+        from pathlib import Path
+
+        maps_dir = Path(__file__).resolve().parent / "assets" / "cards" / "maps"
+        map_card = maps_dir / "map_card.png"
+        if "曙光森林" in current_map.name:
+            map_card = maps_dir / "map_dawn_forest.png"
+        elif "月影山丘" in current_map.name:
+            map_card = maps_dir / "map_moon_hill.png"
+        if not map_card.exists():
+            fallback = map_card.with_suffix(".svg")
+            if fallback.exists():
+                map_card = fallback
+        if map_card.exists():
+            st.image(str(map_card), caption=f"地圖：{current_map.name}")
         st.write(
             {
                 "回合": display_week if display_week else current_map.week,
                 "地圖名稱": current_map.name,
                 "地圖難度": current_map.difficulty_count,
-                "Easy機率": current_map.easy_rate,
-                "Medium機率": current_map.medium_rate,
-                "Hard機率": current_map.hard_rate,
-                "BOSS編號": current_map.boss_id,
                 "BOSS階段": "是" if boss_stage else "否",
                 "BOSS結算": "已完成" if boss_settled else "未完成",
             }
@@ -155,4 +159,4 @@ def render() -> None:
         st.info("地圖表無資料。")
 
     st.caption("查看全員狀態、等級與技能摘要。")
-    st.caption("若狀態未更新，請先完成任務或週結算。")
+    st.caption("若狀態未更新，請先完成任務或回合結算。")

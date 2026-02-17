@@ -972,7 +972,7 @@ class Logic:
         header, data = self.repo.get_logs(limit=500)
         idx = self._log_indices(header)
         target_week = str(current_week - 1)
-        status_done = {"✅擊殺", "☠️失敗", "?擊殺", "??失敗"}  # 已完成或已失敗的狀態
+        status_done = {"擊殺", "失敗"}
         to_fail = []
         # 搜尋上週未完成的任務
         for task in self.tasks:
@@ -996,7 +996,7 @@ class Logic:
         idx = self._log_indices(header)
         removed = 0
         for task in list(self.tasks):
-            if task.status not in {"✅擊殺", "☠️失敗", "?擊殺", "??失敗"}:
+            if task.status not in {"擊殺", "失敗"}:
                 continue
             task_week = self._get_task_week(task, header, data, idx)
             if not task_week:
@@ -1055,7 +1055,7 @@ class Logic:
         event_codes = []
         if week is not None:
             event_codes = self._get_event_codes_for_week(str(week))
-        status_done = {"✅擊殺", "☠️失敗", "?擊殺", "??失敗"}  # 已完成或已失敗的任務狀態
+        status_done = {"擊殺", "失敗"}
         # 找出所有有進行中任務的玩家（僅計入本週任務）
         active_players = set()
         if week is not None:
@@ -1342,7 +1342,7 @@ class Logic:
         bonus_exp += support_result.get("bonus_exp", 0)
         support_bonus = support_result.get("support_bonus", False)
 
-        task.status = "?擊殺"
+        task.status = "擊殺"
         total_exp = base_exp + bonus_exp
         player.exp += total_exp
         if bonus_mp:
@@ -1460,7 +1460,7 @@ class Logic:
         log_idx = self._log_indices(log_header)
         week = self._get_task_week(task, log_header, log_data, log_idx)
         week_str = week if week else ""
-        task.status = "??失敗"  # 標記任務為失敗
+        task.status = "失敗"  # 標記任務為失敗
         
         before_hp = player.hp_current
         before_mp = player.mp_current
@@ -1697,7 +1697,7 @@ class Logic:
             4. 若已逾期，自動失敗任務（扣血）
         """
         today = time_utils.now().date()
-        status_done = {"✅擊殺", "☠️失敗", "?擊殺", "??失敗"}  # 已完成或已失敗的狀態
+        status_done = {"擊殺", "失敗"}
         for t in self.tasks:
             if t.status in status_done:
                 continue  # 跳過已完成的任務
@@ -1724,7 +1724,7 @@ class Logic:
         self.refresh_state()
         header, data = self.repo.get_logs(limit=500)
         idx = self._log_indices(header)
-        status_done = {"✅擊殺", "☠️失敗", "?擊殺", "??失敗"}
+        status_done = {"擊殺", "失敗"}
         count = 0
         for task in self.tasks:
             if task.status in status_done:
@@ -1740,7 +1740,7 @@ class Logic:
         self.refresh_state()
         header, data = self.repo.get_logs(limit=500)
         idx = self._log_indices(header)
-        status_done = {"✅擊殺", "☠️失敗", "?擊殺", "??失敗"}
+        status_done = {"擊殺", "失敗"}
         to_fail = []
         for task in self.tasks:
             if task.status in status_done:
@@ -1789,7 +1789,7 @@ class Logic:
             type_="任務",
             code=task.monster_id,
             name=task.name,
-            desc=desc if desc is not None else ("完成" if task.status == "?擊殺" else "失敗"),
+            desc=desc if desc is not None else ("完成" if task.status == "擊殺" else "失敗"),
             target=player.name,
             delta_hp=delta_hp,
             delta_mp=delta_mp,
