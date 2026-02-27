@@ -273,10 +273,13 @@ def render() -> None:
             st.caption(line)
         return
 
-    task_labels = [
-        f"#{i+1} {t.player} - {t.name} ({t.monster_id}) {t.start_date or ''}~{t.deadline or ''}"
-        for i, t in enumerate(tasks)
-    ]
+    task_labels = []
+    for i, t in enumerate(tasks):
+        outcome = logic.get_task_completion_outcome(t) if str(t.status).startswith("擊殺") else ""
+        marker = f" [{outcome}]" if outcome else ""
+        task_labels.append(
+            f"#{i+1} {t.player} - {t.name}{marker} ({t.monster_id}) {t.start_date or ''}~{t.deadline or ''}"
+        )
     selected = st.selectbox("選擇任務", options=task_labels)
     task = tasks[task_labels.index(selected)]
     player = next((p for p in logic.players if p.name == task.player), None)
@@ -294,40 +297,59 @@ def render() -> None:
     )
 
     status_done = {"擊殺", "失敗"}
-    is_done = task.status in status_done
+    is_done = str(task.status).startswith("擊殺") or str(task.status).startswith("失敗")
     if is_done:
         st.caption("此任務已完成，將在下次回合結算時清除。")
 
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
+    task_key_base = f"{task.player}_{task.monster_id}_{task.start_date}_{task.deadline}"
     with col1:
-        if st.button("完成任務", disabled=is_done):
+        if st.button("完美擊殺", key=f"task_perfect_{task_key_base}", disabled=is_done):
             if not player:
                 st.error("找不到對應玩家。")
             else:
                 if logic.is_task_overdue(task):
                     logic.fail_task(task, player)
-                    st.warning("任務已超過截止日，判定為失敗。")
+                    st.warning("任務已逾期，已判定為失敗。")
                     st.session_state.pop("last_refresh", None)
                     st.rerun()
                     return
-                logic.complete_task(task, player)
-                st.success("已標記完成。")
+                logic.complete_task(task, player, outcome="perfect")
+                st.success("已完成任務（完美擊殺）。")
                 st.session_state.pop("last_refresh", None)
                 st.rerun()
     with col2:
-        if st.button("任務失敗", disabled=is_done):
+        if st.button("一般擊殺", key=f"task_normal_{task_key_base}", disabled=is_done):
+            if not player:
+                st.error("找不到對應玩家。")
+            else:
+                if logic.is_task_overdue(task):
+                    logic.fail_task(task, player)
+                    st.warning("任務已逾期，已判定為失敗。")
+                    st.session_state.pop("last_refresh", None)
+                    st.rerun()
+                    return
+                logic.complete_task(task, player, outcome="normal")
+                st.success("已完成任務（一般擊殺）。")
+                st.session_state.pop("last_refresh", None)
+                st.rerun()
+    with col3:
+        if st.button("任務失敗", key=f"task_fail_{task_key_base}", disabled=is_done):
             if not player:
                 st.error("找不到對應玩家。")
             else:
                 logic.fail_task(task, player)
-                st.warning("已標記失敗。")
+                st.warning("已將任務判定為失敗。")
                 st.session_state.pop("last_refresh", None)
                 st.rerun()
-    with col3:
-        if st.button("檢查逾時", disabled=is_done):
+    with col4:
+        if st.button("逾期判定", key=f"task_mark_overdue_{task_key_base}", disabled=is_done):
             logic.mark_overdue_tasks()
-            st.info("已檢查逾時任務。")
+            st.info("已檢查並更新逾期任務。")
             st.rerun()
+
+    st.caption("完美擊殺：完美完成任務要求")
+    st.caption("一般擊殺：用不同運動方式，依照任務要求的時間或次數完成。")
 
     for line in help_lines:
         st.caption(line)

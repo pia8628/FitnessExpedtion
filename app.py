@@ -19,6 +19,7 @@ from ui import (
     is_entered,
     get_active_player,
     set_entered,
+    render_notification_modal,
 )
 
 def main() -> None:
@@ -37,12 +38,12 @@ def main() -> None:
 
     page = st.sidebar.radio(
         "頁面",
-        options=["狀態總覽", "週結算", "任務", "技能", "紀錄", "版本更新"],
+        options=["狀態總覽", "回合與抽卡", "任務", "技能", "紀錄", "版本更新"],
     )
 
     if page == "狀態總覽":
         dashboard.render()
-    elif page == "週結算":
+    elif page == "回合與抽卡":
         draws.render()
     elif page == "任務":
         tasks.render()
@@ -52,6 +53,8 @@ def main() -> None:
         logs.render()
     elif page == "版本更新":
         changelog.render()
+
+    render_notification_modal()
 
 if __name__ == "__main__":
     main()

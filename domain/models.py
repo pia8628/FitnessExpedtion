@@ -29,11 +29,26 @@ class PlayerState:
             return results
         header, *data = rows
         col = {name: idx for idx, name in enumerate(header)}
+        normalized_header = [
+            ("".join(ch for ch in str(name) if ch.isalnum()).lower(), idx)
+            for idx, name in enumerate(header)
+        ]
+
         def get_value(row: List[str], names: List[str], default: str = "") -> str:
             for name in names:
                 idx = col.get(name)
                 if idx is not None and idx < len(row):
                     return row[idx]
+            # Fallback: tolerate headers with extra symbols, parentheses, or suffixes.
+            for name in names:
+                key = "".join(ch for ch in str(name) if ch.isalnum()).lower()
+                if not key:
+                    continue
+                for norm_head, idx in normalized_header:
+                    if idx >= len(row):
+                        continue
+                    if key == norm_head or key in norm_head or norm_head in key:
+                        return row[idx]
             return default
 
         def parse_int(value: str, default: int = 0) -> int:
@@ -108,11 +123,26 @@ class Task:
             return results
         header, *data = rows
         col = {name: idx for idx, name in enumerate(header)}
+        normalized_header = [
+            ("".join(ch for ch in str(name) if ch.isalnum()).lower(), idx)
+            for idx, name in enumerate(header)
+        ]
+
         def get_value(row: List[str], names: List[str], default: str = "") -> str:
             for name in names:
                 idx = col.get(name)
                 if idx is not None and idx < len(row):
                     return row[idx]
+            # Fallback: tolerate headers with extra symbols, parentheses, or suffixes.
+            for name in names:
+                key = "".join(ch for ch in str(name) if ch.isalnum()).lower()
+                if not key:
+                    continue
+                for norm_head, idx in normalized_header:
+                    if idx >= len(row):
+                        continue
+                    if key == norm_head or key in norm_head or norm_head in key:
+                        return row[idx]
             return default
 
         def parse_int(value: str, default: int = 0) -> int:

@@ -46,6 +46,8 @@ class FakeRepo:
         self.updated_home = None
         self.saved_players = []
         self.appended_logs = []
+        self.job_base_stats = {}
+        self.level_table = ([], [], [], [])
 
     def get_logs(self, limit=None):
         data = self._logs[-limit:] if limit else self._logs
@@ -72,10 +74,16 @@ class FakeRepo:
         return []
 
     def get_level_table(self):
-        return [], [], [], []
+        return self.level_table
+
+    def get_job_base_stats(self, job_code):
+        return self.job_base_stats.get(job_code, (0, 0))
 
     def save_player_state(self, state):
         self.saved_players.append(state)
+        return True
+
+    def update_task_status(self, task):
         return True
 
     def append_log(self, log):
@@ -171,7 +179,7 @@ class LogicMapProgressTests(unittest.TestCase):
         )
         repo = FakeRepo(maps=[map1, map2], players=players, home_week=3, home_map_id="M1")
         logic = Logic(repo)
-        success, _ = logic.resolve_boss_week(
+        success, _, _ = logic.resolve_boss_week(
             boss,
             week=3,
             hours_by_player={"P1": 0, "P2": 0},
@@ -180,6 +188,69 @@ class LogicMapProgressTests(unittest.TestCase):
         )
         self.assertTrue(success)
         self.assertEqual(repo.updated_home, (3, "M2"))
+
+    def test_check_level_up_uses_job_base_plus_level_bonus(self):
+        repo = FakeRepo()
+        repo.level_table = (
+            [1, 2, 3],
+            [2, 5, 9],   # HP 增量
+            [1, 3, 4],   # MP 增量
+            [0, 10, 30], # 升級需求 EXP
+        )
+        repo.job_base_stats = {"Warrior": (20, 8)}
+        logic = Logic(repo)
+        logic._grant_random_job_skills = lambda *_args, **_kwargs: None
+        player = models.PlayerState(
+            name="P1",
+            job="Warrior",
+            level=1,
+            exp=10,
+            hp_current=7,
+            mp_current=2,
+            hp_max=22,
+            mp_max=9,
+        )
+
+        log = logic._check_level_up(player)
+
+        self.assertIsNotNone(log)
+        self.assertEqual(player.level, 2)
+        self.assertEqual(player.hp_max, 25)  # 20 + 5
+        self.assertEqual(player.mp_max, 11)  # 8 + 3
+        self.assertEqual(player.hp_current, 25)
+        self.assertEqual(player.mp_current, 11)
+
+    def test_fail_task_triggers_penalty_and_revives_hp(self):
+        player = models.PlayerState(
+            name="P1",
+            job="Warrior",
+            level=1,
+            exp=0,
+            hp_current=3,
+            mp_current=5,
+            hp_max=10,
+            mp_max=8,
+        )
+        task = models.Task(
+            monster_id="M1",
+            player="P1",
+            name="Task",
+            difficulty="E",
+            content="",
+            start_date="2026-02-01",
+            deadline="2026-02-02",
+            status="進行中",
+            success_exp=0,
+            fail_hp=-10,
+        )
+        repo = FakeRepo(players=[player])
+        logic = Logic(repo)
+
+        logic.fail_task(task, player)
+
+        self.assertEqual(player.penalty_weeks, 2)
+        self.assertEqual(player.mp_current, 0)
+        self.assertEqual(player.hp_current, 5)  # 10 // 2
 
 
 if __name__ == "__main__":

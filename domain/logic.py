@@ -26,6 +26,14 @@ DEFERRED_EVENT_CODES = {
     "CHOICE_MONSTER_LV-1_OR_LV+1_BONUS_EXP+5",
 }
 
+JOB_PREFIX_MAP = {
+    "弓箭手": "Ar",
+    "法師": "Ma",
+    "牧師": "Pr",
+    "劍士": "Sw",
+    "盜賊": "Th",
+}
+
 
 class Logic:
     """核心業務邏輯類，負責協調玩家狀態、任務、技能和事件系統的所有操作。"""
@@ -40,6 +48,7 @@ class Logic:
         self.players: List[models.PlayerState] = []  # 當前內存中的玩家狀態列表
         self.tasks: List[models.Task] = []  # 當前內存中的任務列表
         self.skill_states: List[models.SkillState] = []  # 當前內存中的技能狀態列表
+        self.pending_notifications: List[dict] = []
 
     def refresh_state(self):
         """從資料庫同步所有必要的狀態數據到內存。
@@ -105,16 +114,22 @@ class Logic:
         map_id = min(maps, key=lambda m: m.week).map_id if maps else ""
         self.repo.update_home_status(1, map_id)
 
-        # 初始化技能
+        # 初始化技能（職業 + 通用）
         skill_defs = {}
         for job_code, _ in cleaned:
             for skill in self.repo.get_job_skill_pool(job_code):
                 skill_defs[skill.skill_id] = skill
+        for skill in self.repo.get_job_skill_pool("Ge"):
+            skill_defs[skill.skill_id] = skill
         skill_states: List[models.SkillState] = []
         for player in states:
             base_skill_ids = ["GeA001", "GeA002"]
             job_skills = self.repo.get_job_skill_pool(player.job)
-            job_skill_ids = {s.skill_id for s in job_skills}
+            general_skills = self.repo.get_job_skill_pool("Ge")
+            pool_by_id = {}
+            for s in job_skills + general_skills:
+                pool_by_id[s.skill_id] = s
+            player_pool = list(pool_by_id.values())
             owned = set()
             for skill_id in base_skill_ids:
                 tmpl = skill_defs.get(skill_id) or self.repo.get_skill_definition(skill_id)
@@ -148,7 +163,7 @@ class Logic:
                     )
                 )
                 owned.add(skill_id)
-            for skill in job_skills:
+            for skill in player_pool:
                 if skill.skill_id in owned:
                     continue
                 skill_states.append(
@@ -1270,7 +1285,9 @@ class Logic:
         
         return True, message, detail
 
-    def complete_task(self, task: models.Task, player: models.PlayerState) -> None:
+    def complete_task(
+        self, task: models.Task, player: models.PlayerState, outcome: str = "perfect"
+    ) -> None:
         """標記任務完成，應用獎勵、觸發被動技能並記錄。
         
         Args:
@@ -1291,6 +1308,15 @@ class Logic:
         - 合體技/特殊狀態處理
         """
         self.refresh_state()
+        current = self._find_current_task(task)
+        if current and (
+            str(current.status or "").startswith("擊殺")
+            or str(current.status or "").startswith("失敗")
+        ):
+            return
+        status_text = str(task.status or "")
+        if status_text.startswith("擊殺") or status_text.startswith("失敗"):
+            return
         log_header, log_data = self.repo.get_logs(limit=500)
         log_idx = self._log_indices(log_header)
         week = self._get_task_week(task, log_header, log_data, log_idx)
@@ -1342,8 +1368,12 @@ class Logic:
         bonus_exp += support_result.get("bonus_exp", 0)
         support_bonus = support_result.get("support_bonus", False)
 
+        if outcome not in {"perfect", "normal"}:
+            outcome = "perfect"
+        kill_label = "完美擊殺" if outcome == "perfect" else "一般擊殺"
         task.status = "擊殺"
-        total_exp = base_exp + bonus_exp
+        kill_exp = base_exp if outcome == "perfect" else int(base_exp * 0.7)
+        total_exp = kill_exp + bonus_exp
         player.exp += total_exp
         if bonus_mp:
             player.mp_current = validators.clamp(
@@ -1356,7 +1386,7 @@ class Logic:
             delta_hp=0,
             delta_mp=bonus_mp,
             delta_exp=total_exp,
-            desc="擊敗怪物",
+            desc=f"擊敗怪物（{kill_label}）",
             week=week_str,
             update_task=True,
         )
@@ -1456,6 +1486,12 @@ class Logic:
             5. 刪除任務
         """
         self.refresh_state()
+        current = self._find_current_task(task)
+        if current and (
+            str(current.status or "").startswith("擊殺")
+            or str(current.status or "").startswith("失敗")
+        ):
+            return
         log_header, log_data = self.repo.get_logs(limit=500)
         log_idx = self._log_indices(log_header)
         week = self._get_task_week(task, log_header, log_data, log_idx)
@@ -1489,6 +1525,15 @@ class Logic:
         if penalty_triggered:
             player.penalty_weeks = 2
             player.mp_current = 0
+            if player.hp_max > 0:
+                player.hp_current = max(1, player.hp_max // 2)
+            self.pending_notifications.append(
+                {
+                    "kind": "death",
+                    "title": "死亡懲罰",
+                    "message": f"{player.name} HP 歸零，已復活為半血，MP 兩週歸零。",
+                }
+            )
         
         # 保存變更並記錄日誌
         self._persist_task_and_player(
@@ -1511,7 +1556,7 @@ class Logic:
                 name="死亡懲罰",
                 desc="HP 歸零，MP 兩週歸零",
                 target=player.name,
-                delta_hp=-before_hp,
+                delta_hp=player.hp_current - before_hp,
                 delta_mp=-before_mp,
                 delta_exp=0,
                 hp=player.hp_current,
@@ -1778,10 +1823,17 @@ class Logic:
             week: 週數
         """
         if update_task:
-            self.repo.update_task_status(task)
+            updated = self.repo.update_task_status(task)
+            if not updated:
+                self.refresh_state()
+                current = self._find_current_task(task)
+                if current:
+                    current.status = task.status
+                    updated = self.repo.update_task_status(current)
         if getattr(player, "penalty_weeks", 0) > 0:
             player.mp_current = 0
         self.repo.save_player_state(player)
+        log_desc = desc if desc is not None else ("完成" if task.status == "擊殺" else "失敗")
         log = models.LogEntry(
             date=time_utils.now().date().isoformat(),
             week=week,
@@ -1789,7 +1841,7 @@ class Logic:
             type_="任務",
             code=task.monster_id,
             name=task.name,
-            desc=desc if desc is not None else ("完成" if task.status == "擊殺" else "失敗"),
+            desc=log_desc,
             target=player.name,
             delta_hp=delta_hp,
             delta_mp=delta_mp,
@@ -1832,13 +1884,36 @@ class Logic:
             old = player.level
             player.level = target_level
             idx = levels.index(target_level)
-            # 更新 HP/MP 上限
-            player.hp_max = hp_inc[idx] if idx < len(hp_inc) else player.hp_max
-            player.mp_max = mp_inc[idx] if idx < len(mp_inc) else player.mp_max
+            # 更新 HP/MP 上限：職業基礎值 + 等級增量
+            job_base_hp, job_base_mp = self.repo.get_job_base_stats(player.job)
+            player.hp_max = job_base_hp + (hp_inc[idx] if idx < len(hp_inc) else 0)
+            player.mp_max = job_base_mp + (mp_inc[idx] if idx < len(mp_inc) else 0)
             # 回滿 HP/MP
             player.hp_current = player.hp_max
             player.mp_current = player.mp_max
-            self._grant_random_job_skills(player, target_level - old)
+            granted_skills = self._grant_random_job_skills(player, target_level - old)
+            if granted_skills:
+                self.pending_notifications.append(
+                    {
+                        "kind": "levelup",
+                        "title": "升級通知",
+                        "message": f"{player.name} 升級到 Lv{player.level}",
+                        "skills": [
+                            {"name": s.name or s.skill_id, "description": s.description or ""}
+                            for s in granted_skills
+                        ],
+                    }
+                )
+            else:
+                self.pending_notifications.append(
+                    {
+                        "kind": "levelup",
+                        "title": "升級通知",
+                        "message": f"{player.name} 升級到 Lv{player.level}",
+                        "skills": [],
+                        "no_skill_message": "本次未獲得新技能",
+                    }
+                )
             return models.LogEntry(
                 date=time_utils.now().date().isoformat(),
                 week="",
@@ -1857,31 +1932,152 @@ class Logic:
             )
         return None
 
-    def _grant_random_job_skills(self, player: models.PlayerState, count: int) -> None:
+    def _grant_random_job_skills(self, player: models.PlayerState, count: int) -> List[models.SkillState]:
         if count <= 0:
-            return
-        header, data, skill_states = self.repo.get_skill_states_with_header()
-        if not header:
-            return
+            return []
+        _header, _data, skill_states = self.repo.get_skill_states_with_header()
+        # Backfill missing player skill rows for legacy save data:
+        # ensure each player has rows for own-job + general skill pool.
+        player_skill_ids = {s.skill_id for s in skill_states if s.player == player.name}
+        source_pool = {}
+        for key in self._candidate_job_keys(player.job):
+            for s in self.repo.get_job_skill_pool(key):
+                source_pool[s.skill_id] = s
+        for s in self.repo.get_job_skill_pool("Ge"):
+            source_pool[s.skill_id] = s
+        if not source_pool:
+            known_keys = ["Ar", "Ma", "Pr", "Sw", "Th", "Ge", "弓箭手", "法師", "牧師", "劍士", "盜賊", "通用"]
+            for key in known_keys:
+                for s in self.repo.get_job_skill_pool(key):
+                    if self._is_skill_for_player(player, s.skill_id, s.job):
+                        source_pool[s.skill_id] = s
+        for skill_id, tmpl in source_pool.items():
+            if skill_id in player_skill_ids:
+                continue
+            new_state = models.SkillState(
+                player=player.name,
+                job=tmpl.job or player.job,
+                skill_id=tmpl.skill_id,
+                name=tmpl.name,
+                kind=tmpl.kind,
+                mp_cost=tmpl.mp_cost,
+                enabled="N",
+                total_uses=tmpl.total_uses,
+                remaining=tmpl.total_uses,
+                reset_rule=tmpl.reset_rule,
+                description=tmpl.description,
+            )
+            self.repo.add_skill_state(new_state)
+            skill_states.append(new_state)
+            player_skill_ids.add(skill_id)
         owned = {
             s.skill_id
             for s in skill_states
             if s.player == player.name and s.enabled and s.enabled.upper() == "Y"
         }
-        candidates = [
-            s
-            for s in skill_states
-            if s.player == player.name
-            and s.job == player.job
-            and s.skill_id not in owned
-        ]
+        candidate_ids = [sid for sid in source_pool.keys() if sid not in owned]
+        candidates = [source_pool[sid] for sid in candidate_ids]
+        # Last-resort fallback: if pool parsing still fails, use existing player rows.
+        if not candidates:
+            candidates = [
+                s
+                for s in skill_states
+                if s.player == player.name
+                and self._is_skill_for_player(player, s.skill_id, s.job)
+                and s.skill_id not in owned
+            ]
+        # Ultimate fallback: any disabled skill row for this player (prefer grant over empty result).
+        if not candidates:
+            candidates = [
+                s
+                for s in skill_states
+                if s.player == player.name
+                and (s.enabled or "").upper() != "Y"
+                and s.skill_id not in owned
+            ]
+        # Cross-player template fallback: clone eligible skills from other rows.
+        if not candidates:
+            template_pool = {}
+            for s in skill_states:
+                if not self._is_skill_for_player(player, s.skill_id, s.job):
+                    continue
+                if s.skill_id in owned:
+                    continue
+                template_pool[s.skill_id] = s
+            candidates = list(template_pool.values())
+        # Absolute fallback: derive candidate ids from built-in skill ids.
+        if not candidates:
+            builtin_ids = list(skills.ACTIVE_SKILLS.keys()) + list(skills.PASSIVE_SKILLS.keys())
+            for sid in builtin_ids:
+                if sid in owned:
+                    continue
+                if not self._is_skill_for_player(player, sid, ""):
+                    continue
+                tmpl = self.repo.get_skill_definition(sid)
+                if tmpl is None:
+                    tmpl = models.SkillState(
+                        player="",
+                        job=player.job,
+                        skill_id=sid,
+                        name=sid,
+                        kind="主動" if sid in skills.ACTIVE_SKILLS else "被動",
+                        mp_cost=0,
+                        enabled="N",
+                        total_uses=None,
+                        remaining=None,
+                        reset_rule="",
+                        description="",
+                    )
+                candidates.append(tmpl)
+        granted: List[models.SkillState] = []
         for _ in range(count):
             if not candidates:
                 break
-            choice = random.choice(candidates)
+            choice_template = random.choice(candidates)
+            choice = next(
+                (
+                    s
+                    for s in skill_states
+                    if s.player == player.name and s.skill_id == choice_template.skill_id
+                ),
+                None,
+            )
+            if choice is None:
+                choice = models.SkillState(
+                    player=player.name,
+                    job=choice_template.job or player.job,
+                    skill_id=choice_template.skill_id,
+                    name=choice_template.name,
+                    kind=choice_template.kind,
+                    mp_cost=choice_template.mp_cost,
+                    enabled="N",
+                    total_uses=choice_template.total_uses,
+                    remaining=choice_template.total_uses,
+                    reset_rule=choice_template.reset_rule,
+                    description=choice_template.description,
+                )
+                self.repo.add_skill_state(choice)
+                skill_states.append(choice)
             choice.enabled = "Y"
             choice.remaining = choice.total_uses
-            self.repo.update_skill_state(choice)
+            updated = self.repo.update_skill_state(choice)
+            if not updated:
+                self.repo.add_skill_state(
+                    models.SkillState(
+                        player=player.name,
+                        job=choice.job or player.job,
+                        skill_id=choice.skill_id,
+                        name=choice.name,
+                        kind=choice.kind,
+                        mp_cost=choice.mp_cost,
+                        enabled="Y",
+                        total_uses=choice.total_uses,
+                        remaining=choice.total_uses,
+                        reset_rule=choice.reset_rule,
+                        description=choice.description,
+                    )
+                )
+            granted.append(choice)
             log = models.LogEntry(
                 date=time_utils.now().date().isoformat(),
                 week="",
@@ -1901,6 +2097,29 @@ class Logic:
             self.repo.append_log(log)
             owned.add(choice.skill_id)
             candidates = [c for c in candidates if c.skill_id not in owned]
+        return granted
+
+    def _find_current_task(self, task: models.Task) -> Optional[models.Task]:
+        def _norm(value: Optional[str]) -> str:
+            return str(value or "").strip()
+
+        key = (
+            _norm(task.monster_id),
+            _norm(task.player),
+            _norm(task.start_date),
+            _norm(task.deadline),
+        )
+        for item in self.tasks:
+            candidate = (
+                _norm(item.monster_id),
+                _norm(item.player),
+                _norm(item.start_date),
+                _norm(item.deadline),
+            )
+            if candidate == key:
+                return item
+        return None
+
 
     def resolve_boss_week(
         self,
@@ -2073,6 +2292,159 @@ class Logic:
                     done = part.split("=", 1)[1].strip() == "1"
             results[player] = {"hours": hours, "task_done": done}
         return results
+
+    def pop_pending_notifications(self) -> List[dict]:
+        items = list(self.pending_notifications)
+        self.pending_notifications.clear()
+        return items
+
+    def _job_prefix(self, job_code: str) -> str:
+        code = (job_code or "").strip()
+        if len(code) >= 2 and code[:2] in {"Ar", "Ma", "Pr", "Sw", "Th"}:
+            return code[:2]
+        mapped = JOB_PREFIX_MAP.get(code, "")
+        if mapped:
+            return mapped
+        for name, prefix in JOB_PREFIX_MAP.items():
+            if name in code:
+                return prefix
+        lower = code.lower()
+        english_alias = {
+            "archer": "Ar",
+            "mage": "Ma",
+            "wizard": "Ma",
+            "priest": "Pr",
+            "cleric": "Pr",
+            "swordsman": "Sw",
+            "warrior": "Sw",
+            "thief": "Th",
+            "rogue": "Th",
+        }
+        for token, prefix in english_alias.items():
+            if token in lower:
+                return prefix
+        return ""
+
+    def _is_general_skill(self, skill_id: str) -> bool:
+        return (skill_id or "").startswith("Ge")
+
+    def _candidate_job_keys(self, job_code: str) -> List[str]:
+        keys: List[str] = []
+        raw = (job_code or "").strip()
+        if raw:
+            keys.append(raw)
+        prefix = self._job_prefix(raw)
+        if prefix and prefix not in keys:
+            keys.append(prefix)
+        for name, code in JOB_PREFIX_MAP.items():
+            if raw == name and code not in keys:
+                keys.append(code)
+            if raw == code and name not in keys:
+                keys.append(name)
+            if prefix and code == prefix and name not in keys:
+                keys.append(name)
+        return keys
+
+    def _skill_prefix_from_id(self, skill_id: str) -> str:
+        sid = (skill_id or "").strip()
+        if len(sid) >= 2 and sid[:2] in {"Ar", "Ma", "Pr", "Sw", "Th"}:
+            return sid[:2]
+        return ""
+
+    def _is_skill_for_player(
+        self, player: models.PlayerState, skill_id: str, skill_job: str = ""
+    ) -> bool:
+        if self._is_general_skill(skill_id) or (skill_job or "").strip() in {"Ge", "通用"}:
+            return True
+        prefix = self._job_prefix(player.job)
+        skill_prefix = self._skill_prefix_from_id(skill_id)
+        # Prefer explicit skill-id prefix when available.
+        if skill_prefix:
+            return bool(prefix) and skill_prefix == prefix
+        # Fallback: use the skill's declared job column for matching.
+        normalized_skill_job = (skill_job or "").strip()
+        if not normalized_skill_job:
+            return False
+        if normalized_skill_job == (player.job or "").strip():
+            return True
+        if self._job_prefix(normalized_skill_job) == prefix:
+            return True
+        return False
+
+    def get_task_completion_outcome(self, task: models.Task) -> str:
+        header, data = self.repo.get_logs(limit=500)
+        if not header:
+            return ""
+        idx = self._log_indices(header)
+        idx_code = idx.get("code")
+        idx_type = idx.get("type")
+        idx_desc = idx.get("desc")
+        idx_player = idx.get("player")
+        if None in {idx_code, idx_type, idx_desc, idx_player}:
+            return ""
+        for row in reversed(data):
+            if len(row) <= max(idx_code, idx_type, idx_desc, idx_player):
+                continue
+            if row[idx_type] != "任務":
+                continue
+            if str(row[idx_code]).strip() != str(task.monster_id).strip():
+                continue
+            if str(row[idx_player]).strip() != str(task.player).strip():
+                continue
+            desc = str(row[idx_desc])
+            if "完美擊殺" in desc:
+                return "完美擊殺"
+            if "一般擊殺" in desc:
+                return "一般擊殺"
+        return ""
+
+    def create_personal_extra_task(self, week: int, player_name: str, monster_id: str) -> tuple[bool, str]:
+        if not player_name or not monster_id:
+            return False, "缺少玩家或怪物。"
+        self.refresh_state()
+        player = self._find_player(player_name)
+        if not player:
+            return False, "找不到玩家。"
+        monsters = self.repo.get_monsters()
+        monster = next((m for m in monsters if m.monster_id == monster_id), None)
+        if not monster:
+            return False, "找不到怪物。"
+        today = time_utils.now().date()
+        deadline = today + datetime.timedelta(days=monster.time_limit_days or 0)
+        task = models.Task(
+            monster_id=monster.monster_id,
+            player=player.name,
+            name=monster.name,
+            difficulty=monster.difficulty,
+            content=monster.content,
+            start_date=today.isoformat(),
+            deadline=deadline.isoformat(),
+            status="進行中",
+            success_exp=monster.success_exp,
+            fail_hp=-abs(monster.fail_hp),
+            time_limit_days=monster.time_limit_days,
+        )
+        self.repo.add_task(task)
+        self.tasks = self.repo.get_tasks()
+        self.repo.append_log(
+            models.LogEntry(
+                date=today.isoformat(),
+                week=str(week) if week else "",
+                player=player.name,
+                type_="額外抽卡",
+                code=monster.monster_id,
+                name=monster.name,
+                desc=monster.content,
+                target=player.name,
+                delta_hp=0,
+                delta_mp=0,
+                delta_exp=0,
+                hp=player.hp_current,
+                mp=player.mp_current,
+                exp=player.exp,
+            )
+        )
+        return True, "已建立個人額外抽卡任務。"
 
     def _find_player(self, name: str) -> Optional[models.PlayerState]:
         for p in self.players:

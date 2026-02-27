@@ -25,6 +25,7 @@ def get_logic_state() -> Logic:
     if "last_refresh" not in st.session_state:
         logic.refresh_state()
         st.session_state["last_refresh"] = True
+    _consume_pending_notifications(logic)
     return logic
 
 
@@ -42,6 +43,57 @@ def set_entered(value: bool, active_player: str | None = None) -> None:
 
 def get_active_player() -> str | None:
     return st.session_state.get("active_player")
+
+
+def _consume_pending_notifications(logic: Logic) -> None:
+    queue = st.session_state.setdefault("notification_queue", [])
+    queue.extend(logic.pop_pending_notifications())
+
+
+def render_notification_modal() -> None:
+    queue = st.session_state.get("notification_queue", [])
+    if not queue:
+        return
+    current = queue[0]
+    title = current.get("title", "提示")
+    message = current.get("message", "")
+    skills = current.get("skills", [])
+    no_skill_message = current.get("no_skill_message", "")
+
+    def _confirm() -> None:
+        queue = st.session_state.get("notification_queue", [])
+        if queue:
+            queue.pop(0)
+        st.session_state["notification_queue"] = queue
+
+    if hasattr(st, "dialog"):
+        @st.dialog(title)
+        def _dialog():
+            if message:
+                st.write(message)
+            for item in skills:
+                st.write(f"- {item.get('name', '')}：{item.get('description', '')}")
+            if (not skills) and no_skill_message:
+                st.write(no_skill_message)
+            if st.button("確定", key="notification_confirm_dialog"):
+                _confirm()
+                st.rerun()
+
+        _dialog()
+        return
+
+    # Fallback for older Streamlit without st.dialog.
+    with st.container(border=True):
+        st.subheader(title)
+        if message:
+            st.write(message)
+        for item in skills:
+            st.write(f"- {item.get('name', '')}：{item.get('description', '')}")
+        if (not skills) and no_skill_message:
+            st.write(no_skill_message)
+        if st.button("確定", key="notification_confirm_fallback"):
+            _confirm()
+            st.rerun()
 
 
 def _apply_theme() -> None:

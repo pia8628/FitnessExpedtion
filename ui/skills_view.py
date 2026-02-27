@@ -16,12 +16,11 @@ def render() -> None:
     if not logic.players:
         st.info("尚無玩家資料。")
         return
-
-    if st.button("重新讀取技能狀態"):
+    if st.button("Reload Skills"):
         st.session_state.pop("skill_states", None)
 
-    if "skill_states" not in st.session_state:
-        st.session_state["skill_states"] = logic.repo.get_skill_states()
+    # Always read latest skill states so level-up grants appear immediately.
+    st.session_state["skill_states"] = logic.repo.get_skill_states()
 
     actor_names = [p.name for p in logic.players]
     tasks = logic.tasks

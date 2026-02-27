@@ -2,11 +2,16 @@
 
 import streamlit as st
 
-from ui import get_logic_state, render_header
+from ui import get_active_player, get_logic_state, render_header
+
+
+def _enqueue_draw_complete_notice() -> None:
+    queue = st.session_state.setdefault("notification_queue", [])
+    queue.append({"title": "抽卡完成", "message": "努力擊敗怪物吧！"})
 
 
 def render() -> None:
-    render_header(page_title="回合結算")
+    render_header(page_title="回合與抽卡")
     try:
         logic = get_logic_state()
     except Exception as exc:
@@ -84,6 +89,7 @@ def render() -> None:
                     st.session_state["last_drawn_tasks"] = created
                 st.session_state.pop("boss_result", None)
                 st.session_state.pop("last_refresh", None)
+                _enqueue_draw_complete_notice()
                 st.success(message)
                 st.rerun()
             else:
@@ -108,6 +114,7 @@ def render() -> None:
                         st.session_state["last_drawn_tasks"] = created
                     st.session_state.pop("boss_result", None)
                     st.session_state.pop("last_refresh", None)
+                    _enqueue_draw_complete_notice()
                     st.success(message)
                     st.rerun()
                 else:
@@ -177,5 +184,33 @@ def render() -> None:
         st.info("本回合已抽怪物。")
 
     st.caption("進行本回合抽卡與回合結算流程。")
+    st.subheader("個人額外抽卡")
+    active_player = get_active_player()
+    monsters = logic.repo.get_monsters()
+    monster_options = {f"{m.name}-{m.content}": m.monster_id for m in monsters}
+    if not active_player:
+        st.info("請先從進入遊戲頁面選擇玩家。")
+    elif not monster_options:
+        st.info("目前沒有可用怪物，無法建立個人額外抽卡任務。")
+    else:
+        st.text_input("抽卡玩家", value=active_player, disabled=True)
+        extra_player = active_player
+        extra_label = st.selectbox(
+            "選擇怪物（怪物名稱-任務內容）",
+            options=list(monster_options.keys()),
+            key="extra_draw_monster",
+        )
+        if st.button("建立個人額外抽卡任務", key="create_extra_draw_task"):
+            success, message = logic.create_personal_extra_task(
+                draw_week, extra_player, monster_options[extra_label]
+            )
+            if success:
+                st.success(message)
+                st.session_state.pop("last_refresh", None)
+                _enqueue_draw_complete_notice()
+                st.rerun()
+            else:
+                st.warning(message)
+
     st.caption("若仍有未完成任務，可先確認失敗再結算。")
 
